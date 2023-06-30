@@ -1,84 +1,80 @@
-from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any, Tuple
-from blocks.time_block import MyDateTime
+
+from pydantic import BaseModel, Field
+
 from blocks.location_block import MyLocation
-import torch
-from copy import deepcopy
+from blocks.time_block import MyDateTime
+from blocks.vectorstores.my_faiss import FAISSVectorStore
 
 
 class Observation(BaseModel):
     """
     记忆流最基本的元素，观察
     """
+    id: int
     create_time: MyDateTime  # 发生时间
     view_time: MyDateTime  # 最近访问时间
-    loc: MyLocation  # 发生地点
+    loc: Optional[MyLocation] = None  # 发生地点
     desc: str  # 发生的事情
-    embed: Optional[torch.Tensor] = None  # 词向量
     recency: float = 10.  # 时近性，默认为10分
     importance: float = 0.  # 重要性，默认为0分
-    decay_rate: float = 0.99
     pointers: List = []  # 作为反思时指向的记忆流
     date_prefix: str = "现在是"  # 时间前缀
     loc_prefix: str = "现在在"  # 地点前缀
 
-    def get_recency(self, now: MyDateTime):
+    def get_recency(self, now: MyDateTime, decay_rate=0.99):
         """
         获取时近性: 自上次检索记忆以来根据沙盒游戏内小时数呈指数衰减的函数，衰减因子为 0.99
         """
         interval_seconds = now - self.view_time
         hours_passed = interval_seconds / 3600
         # self.recency *= (self.decay_factor ** hour)
-        recency = self.decay_rate ** hours_passed
+        recency = decay_rate ** hours_passed
+        self.view_time = now
         return recency
-
-    def update_recency(self, date: MyDateTime):
-        self.view_time = date
-        self.recency = 10.
 
     def get_importance(self):
         return self.importance
 
-    def view(self):
-        """
-        查看记忆， 返回记忆内容，并更新查看时间
-        TODO 返回哪些记忆内容
-        """
-        # 获取现在的时间
-        date = ""
-        self.view_time = date
-        info = {}
-        return info
-
     def __str__(self):
-        return f"{self.date_prefix}{str(self.create_time)},{self.loc_prefix},{str(self.loc)}"
-
+        return f"{str(self.create_time)}: {self.desc}"
 
     def __getattr__(self, name):
         if name == 'x':
             self.x += 1
             return self.x
 
-    # def get_score(self, max_recency, min_recency, max_imp, min_imp, alpha=1, beta=1):
-    #     recency =
+
+def min_max_scaling(x, _min, _max):
+    y = (x - _min) / (_max - _min + 1e-9)
+    return y
 
 
-def get_time():
-    pass
+class MaxHeap:
+    def __init__(self, max_size=10):
+        self.max_size = max_size
+        self.items = []
+        self._min = -float("inf")
 
+    def add(self, item, score):
+        if len(self.items) < self.max_size:
+            self.items.append((item, score))
+        elif score > self._min:
+            self.items.pop()
+            self.items.append((item, score))
+        self.items = sorted(self.items, key=lambda x: x[1], reverse=True)
+        self._min = self.items[-1][1]
 
-class Document(BaseModel):
-    """Interface for interacting with a document."""
-
-    page_content: str
-    metadata: dict = Field(default_factory=dict)
+    def get_max(self, k=10):
+        return self.items[:k]
 
 
 class Retriever(BaseModel):
-    vectorstore: Any  # 向量库
+    vector_store: FAISSVectorStore  # 向量库
+    memory_stream: List[Observation] = List  # 记忆流存储位置
+    impt_max_heap: MaxHeap = MaxHeap() # 存储最重要的记忆
     search_kwargs: Dict = Field(default_factory=lambda: dict(k=100))  # 用于检索时的参数
-    memory_stream: List[Observation]  # 记忆流存储位置
-    decay_rate: float = 0.01  # 时近性衰减因子
+    decay_rate: float = 0.99  # 时近性衰减因子
     k: int = 4  # 搜索的最大文档数
     other_score_keys: List[Tuple] = []  # (key, weight)
     default_salience: Optional[float] = None
@@ -88,67 +84,83 @@ class Retriever(BaseModel):
 
         arbitrary_types_allowed = True  # 允许任意类型作为字段类型
 
-    def _get_combined_score(self, observation: Observation,
-                            relevance: Optional[float],
-                            now: MyDateTime, ):
+    def _get_combined_score(self, recency, importance, relevance):
         """获取综合分数"""
-        recency = observation.get_recency(now)
-        score = recency
-        for key, weight in self.other_score_keys:
-            if key in observation:
-                score += observation[key]
-        if relevance is not None:
-            score += relevance
+        alpha = 1.0
+        beta = 1.0
+        gamma = 1.0
+        score = alpha * min_max_scaling(recency, 0, 1) + \
+                beta * min_max_scaling(importance, 0, 10) + \
+                gamma * min_max_scaling(relevance, 0, 1)
         return score
 
-    def get_salient_docs(self, query: str) -> Dict[int, Tuple[Observation, float]]:
+    def _get_relevance_docs(self, query: str) -> List[Tuple[Observation, float]]:
         """获取重要的文档"""
-        obv_and_scores: List[Tuple[Observation, float]]
-        obv_and_scores = self.vectorstore.similarity_search_with_relevance_scores(
+        obv_and_scores: List[Tuple[int, float]]
+        obv_and_scores = self.vector_store.cosine_search(
             query, **self.search_kwargs
         )
-        results = {}
-        for fetched_obv, relevance in obv_and_scores:
-            if "buffer_idx" in fetched_obv:
-                buffer_idx = fetched_obv["buffer_idx"]
-                doc = self.memory_stream[buffer_idx]
-                results[buffer_idx] = (doc, relevance)
+        results = []
+        for obv_id, relevance in obv_and_scores:
+            if 0 <= obv_id <= len(self.memory_stream):
+                obv = self.memory_stream[obv_id]
+                results.append((obv, relevance))
+
         return results
 
-    def get_relevant_memories(self, query: str) -> List[Observation]:
-        """TODO 获取相关的文档"""
-        now = get_time()
-        docs_and_scores = {
-            doc.metadata["buffer_idx"]: (doc, self.default_salience)
-            for doc in self.memory_stream[-self.k:]
-        }
-        # If a doc is considered salient, update the salience score
-        docs_and_scores.update(self.get_salient_docs(query))
-        rescored_docs = [
-            (obv, self._get_combined_score(obv, relevance, now))
-            for obv, relevance in docs_and_scores.values()
-        ]
-        rescored_docs.sort(key=lambda x: x[1], reverse=True)
-        result = []
-        # Ensure frequently accessed memories aren't forgotten
-        for doc, _ in rescored_docs[: self.k]:
-            # TODO: Update vector store doc once `update` method is exposed.
-            buffered_doc = self.memory_stream[doc.metadata["buffer_idx"]]
-            buffered_doc.metadata["view_time"] = now
-            result.append(buffered_doc)
-        return result
+    def _get_importance_docs(self, k):
+        id_and_score = self.impt_max_heap.get_max(k)
+        results = []
+        for obv_id, importance in id_and_score:
+            if 0 <= obv_id <= len(self.memory_stream):
+                obv = self.memory_stream[obv_id]
+                results.append((obv, self.default_salience))
+        return results
 
-    def add_observations(self, observations: List[Observation], **kwargs: Any) -> List[str]:
+    def get_relevant_memories(self, query: str, k, now) -> List[Observation]:
+        """
+        获取记忆
+        1. 分别获取最新，最重要，最相似的前10条记忆
+        2. 去重后排序，返回指定数量的记忆
+        """
+
+        latest_memories = [(obv, self.default_salience) for obv in self.memory_stream[-self.k:]]
+        important_memories = self._get_importance_docs(self.k)
+        relevant_memories = self._get_relevance_docs(query)
+
+        recall_memories: List = []
+        visited = set()
+        for obv, relevance in relevant_memories + important_memories + latest_memories:
+            if obv.id in visited:
+                continue
+            visited.add(obv.id)
+            # 获取时近性得分
+            recency = obv.get_recency(now, self.decay_rate)
+            importance = obv.get_importance()
+            score = self._get_combined_score(recency, importance, relevance)
+            recall_memories.append((obv, score))
+        recall_memories = sorted(recall_memories, key=lambda x: x[1], reverse=True)
+
+        recall_memories = [i[0] for i in recall_memories[:k]]
+        return recall_memories
+
+    def add_observations(self, observations: List[Observation], **kwargs: Any) -> None:
         """保存记忆"""
         now = kwargs.get("now")
         if now is None:
-            now = get_time()
-        # 防止改变数据
-        dup_obvs = [deepcopy(obv) for obv in observations]
-        for i, obv in enumerate(dup_obvs):
-            obv["buffer_idx"] = len(self.memory_stream) + i
-        self.memory_stream.extend(dup_obvs)
-        return self.vectorstore.add_documents(dup_obvs, **kwargs)
+            now = "获取时间"
+        for i, obv in enumerate(observations):
+            if not obv.create_time:
+                obv.create_time = now
+            if not obv.view_time:
+                obv.view_time = now
+            obv.id = len(self.memory_stream)
+            # 添加到向量库
+            self.vector_store.add_text(obv.desc, obv.id)
+            # 维护大顶堆
+            self.impt_max_heap.add(obv.id, obv.importance)
+
+        self.memory_stream.extend(observations)
 
     def __getitem__(self, index):
         return self.memory_stream[index]

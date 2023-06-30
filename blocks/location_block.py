@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Any, List
+from typing import Any, List, Dict
 
 
 class MyLocation(BaseModel):
@@ -13,3 +13,14 @@ class MyLocation(BaseModel):
 
     def __str__(self):
         return self.desc
+
+
+class MyMap(BaseModel):
+    locations: Dict[MyLocation] = {}  # 所有地点
+
+
+my_map = MyMap()
+
+
+def get_loc(name) -> MyLocation:
+    return my_map.locations.get(name)

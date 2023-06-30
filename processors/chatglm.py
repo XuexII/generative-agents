@@ -3,9 +3,10 @@ from abc import ABC
 
 import torch
 from transformers import AutoTokenizer, AutoModel
-from typing import List
+from typing import List, Dict
 from utils.utils_cuda import EmptyGPUCacheTimer
 from threading import Lock
+import openai
 
 model_path = "/home/maiyuan/xuyongzhao/pretrainedmodels/THUDM-chatglm-6b"
 tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -51,4 +52,27 @@ class ChatGLM(ABC):
             self.egct.is_running = False
 
 
-chat_glm = ChatGLM()
+class ChatGPT:
+    def processing(self, content):
+        messages = [{"role": "user", "content": content}]
+
+        openai.api_key = "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"
+        message = ""
+        try:
+            res = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                temperature=0.9,
+                top_p=1,
+                frequency_penalty=0,
+                presence_penalty=0,
+                max_tokens=500,
+                messages=messages
+            )
+            message = res.get("choices")[0].get("message").get("content")
+        except Exception as e:
+            logging.error(f"请求chatGPT报错：{repr(e)}")
+        return message
+
+
+llms_dict = {"chat_glm": ChatGLM(),
+             "chat_gpt": ChatGPT()}
