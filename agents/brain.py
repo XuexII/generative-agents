@@ -1,30 +1,15 @@
+import logging
 from typing import Optional, List
+
+import regex as re
 
 from blocks.location_block import MyLocation
 from blocks.retriever import Observation, Retriever
-from blocks.time_block import MyDateTime, my_clock
+from blocks.time_block import MyDateTime
 from processors.chatglm import llms_dict
-import regex as re
-import logging
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 llm = llms_dict["chat_gpt"]
-
-
-def get_time():
-    """
-    TODO 获取当前时间
-    """
-    time: MyDateTime = MyDateTime()
-    return time
-
-
-def get_loc():
-    """
-    获取地点
-    """
-    loc: MyLocation = MyLocation()
-    return loc
 
 
 class Brain(BaseModel):
@@ -43,6 +28,11 @@ class Brain(BaseModel):
 
     max_tokens_limit: int = 1000
     reflecting: bool = False  # 是否正在反思
+
+    class Config:
+        """Configuration for this pydantic object."""
+
+        arbitrary_types_allowed = True
 
     def _get_topics_of_reflection(self, last_k=50) -> List[str]:
         """
@@ -186,8 +176,6 @@ class Brain(BaseModel):
         """
         检索并取回记忆
         """
-        if now is not None:
-            now = my_clock.now()
         return self.memories.get_relevant_memories(query, self.topk, now)
 
     def _get_memories_until_limit(self, consumed_tokens):

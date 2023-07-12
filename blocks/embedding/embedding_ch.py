@@ -1,12 +1,13 @@
 import torch
 from transformers import BertTokenizer, BertModel, PreTrainedTokenizer, PreTrainedModel
-from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
 
 
-class BaseCHEmbedding(BaseModel, ABC):
-    tokenizer: PreTrainedTokenizer
-    model: PreTrainedModel
+class BaseCHEmbedding:
+
+    def __init__(self, tokenizer, model):
+        self.tokenizer = tokenizer
+        self.model = model
 
     def mean_pooling(self, model_output, attention_mask):
         token_embeddings = model_output[0]  # First element of model_output contains all token embeddings

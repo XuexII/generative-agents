@@ -1,11 +1,10 @@
 from queue import Queue
 from typing import List, Any, Dict
-from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
 from blocks.time_block import MyDateTime
 
 
-class Plan(BaseModel):
+class Plan:
     start: str  # 开始时间 08:00
     end: str  # 结束时间 08:05
     task: str  # 要执行的任务

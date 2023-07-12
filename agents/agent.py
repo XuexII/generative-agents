@@ -1,18 +1,17 @@
 import logging
-from datetime import datetime
 from typing import List, Optional, Tuple
 
 import regex as re
-from pydantic import BaseModel, Field
 
 from blocks.location_block import get_loc
 from blocks.other_blocks import Plan, PlanQueue
-from blocks.time_block import MyDateTime, my_clock
+from blocks.time_block import MyDateTime
 from processors.chatglm import llms_dict
-from .brain import Brain
+from agents.brain import Brain
+from blocks.retriever import Observation, Retriever
 
 
-class Agent(BaseModel):
+class Agent:
     name: str  # 姓名
     age: int  # 年龄
     traits: str  # 性格
@@ -22,8 +21,8 @@ class Agent(BaseModel):
     summary_description: str = ""  # Agent’s Summary Description
     summary_refresh_seconds: int = 3600  # 多长时间进行一次总结
 
-    last_refreshed: MyDateTime = my_clock.now()  # 上次生成摘要的时间
-    daily_summaries: List[str] = Field(default_factory=list)  # 执行的计划摘要
+    last_refreshed: MyDateTime  # 上次生成摘要的时间
+    daily_summaries: List[str] = []  # 执行的计划摘要
 
     dialogue_history: List = []
 
@@ -34,6 +33,20 @@ class Agent(BaseModel):
     loc: str  # 所在位置
     time_step: int = 600  # 智能体感知周围环境的时间步，单位秒
     processer = llms_dict["chat_gpt"]
+
+    def __init__(self, name, age, traits, status, profession, clock, loc, memories, faiss_store):
+        super(Agent, self).__init__()
+        self.name = name
+        self.age = age
+        self.traits = traits
+        self.status = status
+        self.profession = profession
+        self.clock = clock
+        now = self.clock.now()
+        self.last_refreshed = now
+        self.loc = loc
+        self.brain = Brain(memories=Retriever(vector_store=faiss_store))
+        self.brain.memorizing_batch(memories, now, place=loc)
 
     def _get_entity_from_observation(self, desc: str) -> str:
         """获取观察主体"""
@@ -145,7 +158,7 @@ class Agent(BaseModel):
 
             return flag, text
 
-        now = my_clock.now()
+        now = self.clock.now()
         # suffix_first = f"{reaction}。 {self.name}可能会说什么？\n" \
         #                f"输出格式为: SAY:要说的话\n"
 
@@ -205,7 +218,7 @@ class Agent(BaseModel):
                      f"对李开心昨天的日程生成3-5条简要的总结:(输出格式：时间范围：主要事件)"
             summaries = self._brief_summary(prompt)
             summary = ";".join(summaries)
-            yesterday = my_clock.past(1)
+            yesterday = self.clock.past(1)
             month = yesterday.get("month", "N/A")
             day = yesterday.get("day", "N/A")
             weekday = yesterday.get("weekday", "N/A")
@@ -257,7 +270,7 @@ class Agent(BaseModel):
                  f"根据粗略计划的时间范围和活动目标，生成更细致的活动目标，每个活动限制在5-15分钟以内;\n" \
                  f"细致计划示例:\n" \
                  f"[7:14-7:20]: 起床并完成早间程序\n" \
-                 f"[7:20-7:30]: 先吃早餐\n\n" \
+                 f"[7:20-7:30]: 吃早餐\n\n" \
                  f"细致计划:"
         detailed_plans = self.processer.processing(prompt)
         detailed_plans = self.parse_plan(detailed_plans)
@@ -265,7 +278,7 @@ class Agent(BaseModel):
 
     def _replan(self, observation, reaction):
         """重新生成计划"""
-        now = my_clock.now()
+        now = self.clock.now()
         hour = now.get("hour", "N/A")
         minute = now.get("minute", "N/A")
         old_plans = str(self.plans)
@@ -296,7 +309,7 @@ class Agent(BaseModel):
         聊天
         """
 
-        now = my_clock.now()
+        now = self.clock.now()
         flag, mod, action_agent = agent.generate_reaction(self, now)
         if not flag and mod != "SAY":
             logging.info(f"{agent.name}没有回应{self.name}发起得对话")
@@ -334,7 +347,7 @@ class Agent(BaseModel):
             self.status = action
 
     def start(self, time_step: int = 600):
-        now: MyDateTime = my_clock.now()
+        now: MyDateTime = self.clock.now()
         logging.info(f"{self.name}在{str(now)}的日志".center(66, "="))
         # 1. 制定计划
         self.planning(now)
@@ -357,7 +370,7 @@ class Agent(BaseModel):
                 # 感知周围环境
                 flag_break = False
 
-                now = my_clock.now()
+                now = self.clock.now()
                 obv_agent_list = self.perceiving(now)
                 agent = obv_agent_list[0]
                 # observations = "\n".join([f"{obj.name}，{obj.desc}" for obj in agent_list])

@@ -1,10 +1,9 @@
 from typing import List, Dict, Optional, Any, Tuple
 
-from pydantic import BaseModel, Field
-
 from blocks.location_block import MyLocation
 from blocks.time_block import MyDateTime
 from blocks.vectorstores.my_faiss import FAISSVectorStore
+from pydantic import BaseModel
 
 
 class Observation(BaseModel):
@@ -21,6 +20,11 @@ class Observation(BaseModel):
     pointers: List = []  # 作为反思时指向的记忆流
     date_prefix: str = "现在是"  # 时间前缀
     loc_prefix: str = "现在在"  # 地点前缀
+
+    class Config:
+        """Configuration for this pydantic object."""
+
+        arbitrary_types_allowed = True
 
     def get_recency(self, now: MyDateTime, decay_rate=0.99):
         """
@@ -71,9 +75,9 @@ class MaxHeap:
 
 class Retriever(BaseModel):
     vector_store: FAISSVectorStore  # 向量库
-    memory_stream: List[Observation] = List  # 记忆流存储位置
-    impt_max_heap: MaxHeap = MaxHeap() # 存储最重要的记忆
-    search_kwargs: Dict = Field(default_factory=lambda: dict(k=100))  # 用于检索时的参数
+    memory_stream: List[Observation] = []  # 记忆流存储位置
+    impt_max_heap: MaxHeap = MaxHeap()  # 存储最重要的记忆
+    search_kwargs: Dict = {}  # 用于检索时的参数
     decay_rate: float = 0.99  # 时近性衰减因子
     k: int = 4  # 搜索的最大文档数
     other_score_keys: List[Tuple] = []  # (key, weight)
@@ -82,7 +86,7 @@ class Retriever(BaseModel):
     class Config:
         """Configuration for this pydantic object."""
 
-        arbitrary_types_allowed = True  # 允许任意类型作为字段类型
+        arbitrary_types_allowed = True
 
     def _get_combined_score(self, recency, importance, relevance):
         """获取综合分数"""

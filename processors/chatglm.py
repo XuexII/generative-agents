@@ -8,15 +8,15 @@ from utils.utils_cuda import EmptyGPUCacheTimer
 from threading import Lock
 import openai
 
-model_path = "/home/maiyuan/xuyongzhao/pretrainedmodels/THUDM-chatglm-6b"
-tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-model = AutoModel.from_pretrained(model_path, trust_remote_code=True).half().cuda()
-
-print()
-
-model = model.eval()
-response, history = model.chat(tokenizer, "你好", history=[])
-print(response)
+# model_path = "/home/maiyuan/xuyongzhao/pretrainedmodels/THUDM-chatglm-6b"
+# tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+# model = AutoModel.from_pretrained(model_path, trust_remote_code=True).half().cuda()
+#
+# print()
+#
+# model = model.eval()
+# response, history = model.chat(tokenizer, "你好", history=[])
+# print(response)
 
 
 class ChatGLM(ABC):
@@ -56,7 +56,7 @@ class ChatGPT:
     def processing(self, content):
         messages = [{"role": "user", "content": content}]
 
-        openai.api_key = "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"
+        openai.api_key = "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"
         message = ""
         try:
             res = openai.ChatCompletion.create(
@@ -74,5 +74,7 @@ class ChatGPT:
         return message
 
 
-llms_dict = {"chat_glm": ChatGLM(),
-             "chat_gpt": ChatGPT()}
+# llms_dict = {"chat_glm": ChatGLM(),
+#              "chat_gpt": ChatGPT()}
+
+llms_dict = {"chat_gpt": ChatGPT()}
