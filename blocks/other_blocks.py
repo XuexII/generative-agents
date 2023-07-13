@@ -24,9 +24,9 @@ class Plan:
             td = timedelta(hours=hours, minutes=minutes)
             return td
 
-        start = _to_timedelta(self.start)
-        end = _to_timedelta(self.end)
-        return start, end, self.task
+        # start = _to_timedelta(self.start)
+        # end = _to_timedelta(self.end)
+        return self.start, self.end, self.task
 
 
 class PlanQueue(Queue):

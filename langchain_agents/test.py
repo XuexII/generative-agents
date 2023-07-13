@@ -11,21 +11,22 @@ from langchain.experimental.generative_agents import GenerativeAgent, Generative
 import math
 import faiss
 import os
+from langchain.prompts import PromptTemplate
 
 os.environ["http_proxy"] = "http://127.0.0.1:7890"
 os.environ["https_proxy"] = "http://127.0.0.1:7890"
-os.environ["OPENAI_API_KEY"] = "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"
+os.environ["OPENAI_API_KEY"] = ""
 
 USER_NAME = "Person A"  # The name you want to use when interviewing the agent.
-LLM = ChatOpenAI(openai_api_key="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",
+LLM = ChatOpenAI(openai_api_key="",
                  max_tokens=1500)  # Can be any LLM you want.
 
 
 def relevance_score_fn(score: float) -> float:
     """Return a similarity score on a scale [0, 1]."""
     # This will differ depending on a few things:
-    # - the distance / similarity metric used by the VectorStore
-    # - the scale of your embeddings (OpenAI's are unit norm. Many others are not!)
+    #:the distance / similarity metric used by the VectorStore
+    #:the scale of your embeddings (OpenAI's are unit norm. Many others are not!)
     # This function converts the euclidean norm of normalized embeddings
     # (0 is most similar, sqrt(2) most dissimilar)
     # to a similarity function (0 to 1)
@@ -79,3 +80,72 @@ def interview_agent(agent: GenerativeAgent, message: str) -> str:
     """Help the notebook user interact with the agent."""
     new_message = f"{USER_NAME} says {message}"
     return agent.generate_dialogue_response(new_message)[1]
+
+obv = "Tommie wakes up to the sound of a noisy construction site outside his window."
+
+_, reaction = tommie.generate_reaction(obv)
+
+
+weekday_map = {"1": "Monday", "2": "Tuesday", "3": "Wednesday",
+               "4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday"}
+
+
+def _get_yesterday(now=None, offset: int = 0):
+    now = now if now else datetime.now()
+    now = now + timedelta(offset)
+    _, week, weekday = now.isocalendar()
+    date_str = now.strftime("%B %d,%H:%M")
+    date, hour = date_str.split(",")
+    return date, hour, weekday_map.get(str(weekday), "Monday")
+
+
+now = datetime.now()
+summary_description = tommie.get_summary(now=now)
+
+schedule = ['7:00:Wake up, wash up',
+            '7:30:Morning exercise',
+            '8:00:Breakfast',
+            '9:00:Work or personal projects',
+            '12:00:Lunch',
+            '13:00:Rest, relaxation',
+            '14:00:Continue work or personal projects',
+            '18:00:Finish work, free time',
+            '19:00:Dinner',
+            '20:00:Leisure activities (reading, watching TV, etc.)',
+            '22:00:Prepare for bed',
+            '23:00:Sleep']
+schedule_str = ";".join(schedule)
+prompt = PromptTemplate.from_template(
+    "{name}'s schedule for yesterday:\n"
+    "{schedule_str}\n\n"
+    "Generate 3-5 brief summaries of {name}'s schedule for yesterday (output format: Time Range: Main Event):"
+)
+summaries = tommie.chain(prompt).run(name=tommie.name, schedule_str=schedule_str).strip()
+
+yestd, hour, yestw = _get_yesterday(offset=-1)
+
+schedule_summary = f"On {yestw} {yestd}, {tommie.name}" + summaries
+
+# 2. 生成粗略规划
+date, hour, weekd = _get_yesterday(now=now)
+
+prompt = PromptTemplate.from_template(
+    "{summary_description}\n"
+    "{schedule_summary}\n"
+    "plan example format:"
+    "[7:14-7:45]:  Wake up and complete the morining routine\n"
+    "[7:45-8:35]: Eat breakfirst\n"
+    "[8:35-17:10]: Go to school and study\n"
+    "[17:10-22:30]: Play CSGO\n"
+    "[22:30-7:30]: Go to sleep\n\n"
+    "Today is {weekd} {date}. Here is {name}’s plan today in broad strokes from {hour} today:"
+)
+
+plans = tommie.chain(prompt).run(summary_description=summary_description,
+                                 schedule_summary=schedule_summary,
+                                 weekd=weekd,
+                                 date=date,
+                                 name=tommie.name,
+                                 hour=hour).strip()
+
+print()
