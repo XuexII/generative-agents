@@ -11,7 +11,7 @@ text_vector = Text2VecBase.init_model(model_path)
 # 实例化faiss
 faiss_store = FAISSVectorStore(embed_dim=768, embed_function=text_vector)
 
-zs = {"name": "张三1",
+zs = {"name": "张三11",
       "age": 30,
       "traits": "勤劳踏实，努力上进",
       "status": "早上刚刚醒来",
