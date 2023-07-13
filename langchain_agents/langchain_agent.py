@@ -307,16 +307,19 @@ class LangChainAgent(GenerativeAgent):
             turns += 1
         logging.info(observation)
 
-    def reacting(self, mod, action, agent):
+    def reacting(self, mod, action, agent_list):
         """行动"""
         # 1. 解析行动
         # 2. 执行行动
         if mod == "SAY":
             logging.info(f"{self.name}做出的反应是对话")
-            self.run_conversation(action, agent)
-        else:
+            self.run_conversation(action, agent_list)
+        elif mod == "REACT":
             logging.info(f"{self.name}做出的反应是行动: {action}")
+            self.acting(action)
             self.status = action
+        else:
+            logging.info(f"{self.name}没有做出反应: {action}")
 
     def start(self, now: Optional[datetime] = None, time_step: int = 60):
         logging.info(f"{self.name}在{str(now)}的日志".center(66, "="))
@@ -338,11 +341,14 @@ class LangChainAgent(GenerativeAgent):
                 start, end, task = dp.get_info()
                 self.status = task
                 # 打印计划信息
+                now = datetime.now()
+                # 执行计划
                 logging.info(f"{start}-{end}: {task}")
-                used_time = time.time()
+                self.acting(task)
+                end_time = time.time()
+                used_time = end_time - start_time
                 # 感知周围环境
                 obv_agent_list = []
-                now = datetime.now()
                 if used_time // time_step > 0:
                     obv_agent_list = self.perceiving(now)
                 agent = obv_agent_list[0]
@@ -350,8 +356,9 @@ class LangChainAgent(GenerativeAgent):
                 if obv_agent_list:
                     # 判断采取反应还是继续执行计划
                     mod, action = self.generate_reaction(f"{self.name} saw {agent.name} is {agent.status}", now)
-                    logging.info(f"{now.}，{self.name}观察到: \n{agent.status}\n"
-                                 f"{self.name}决定对该反应{'做出' if flag_break else '不做出'}反应: {action}")
+                    date_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                    logging.info(f"{date_str}: {self.name}观察到: \n{agent.status}")
+                    self.reacting(mod, action, obv_agent_list)
                     # 如果需要做出反应，则更新计划
                     flag = False
                     if flag:

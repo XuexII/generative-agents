@@ -1,15 +1,15 @@
-from pydantic import BaseModel, Extra, Field, root_validator
-from typing import Any, List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional
+
+from pydantic import BaseModel, Extra
 
 
 class MyLocation(BaseModel):
     name: str  # 地名
     desc: str = ""  # 地点描述
     owner: Optional[str] = None  # 所有者
-    coordinate: Tuple = ()  # 坐标
-    bbox: Tuple = ()  # 边界框
-    lay: List = []  # 陈设
+    layout: List = []  # 陈设
     guest: List = []  # 来客
+
     class Config:
         """Configuration for this pydantic object."""
 
@@ -31,13 +31,15 @@ class MyLocation(BaseModel):
         return True
 
 
-
-loc = MyLocation(name="家")
-
-
 class MyMap:
     def __init__(self):
-        self.locations: Dict[MyLocation] = {"家": loc}  # 所有地点
+        self.locations: Dict[MyLocation] = {}  # 所有地点
+
+    def get_loc(self, name: str) -> MyLocation:
+        """
+        根据名称获取地点
+        """
+        pass
 
 
 my_map = MyMap()
@@ -46,4 +48,36 @@ my_map = MyMap()
 def get_loc(name) -> MyLocation:
     """获取地点"""
     return my_map.locations.get(name)
+
+map = {
+    "张三家": {
+        "layout": {
+            "张三的卧室": {
+                "layout": {}
+            },
+            "厨房": {
+                "layout": {}
+            },
+            "张小西的卧室": {
+                "layout": {}
+            },
+            "卫生间": {
+                "layout": {}
+            }
+        }
+    },
+    "李四家": {
+        "layout": {
+            "李四的卧室": {
+                "layout": {}
+            },
+            "厨房": {
+                "layout": {}
+            },
+            "卫生间": {
+                "layout": {}
+            }
+        }
+    },
+}
 
