@@ -2,9 +2,10 @@ from queue import Queue
 from typing import List, Any, Dict
 from datetime import datetime, timedelta
 from blocks.time_block import MyDateTime
+from pydantic import BaseModel
 
 
-class Plan:
+class Plan(BaseModel):
     start: str  # 开始时间 08:00
     end: str  # 结束时间 08:05
     task: str  # 要执行的任务
@@ -29,7 +30,21 @@ class Plan:
         return self.start, self.end, self.task
 
 
-class PlanQueue(Queue):
+class MyQueue(BaseModel):
+    queue: List = []
+
+    def put(self, x):
+        self.queue.append(x)
+
+    def get(self, block=True, timeout=None):
+        if not self.empty():
+            return self.queue.pop(0)
+
+    def empty(self):
+        return len(self.queue) < 1
+
+
+class PlanQueue(MyQueue):
 
     def batch_put(self, plans: List[Plan]):
         for plan in plans:

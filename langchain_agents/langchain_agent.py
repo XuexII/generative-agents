@@ -1,30 +1,84 @@
-from langchain.experimental.generative_agents import GenerativeAgent, GenerativeAgentMemory
-from typing import List, Dict, Optional, Tuple, Union
+from typing import List, Dict, Optional, Tuple, Union, Any
 from blocks.other_blocks import Plan, PlanQueue
 from datetime import datetime, timedelta
 from langchain.prompts import PromptTemplate
 import regex as re
 import logging
-from blocks.location_block import MyLocation, get_loc
+from blocks.location_block import MyLocation, my_map
 import time
+from langchain_agents.generative_agent import GenerativeAgent
 
 weekday_map = {"1": "Monday", "2": "Tuesday", "3": "Wednesday",
                "4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday"}
 
 
 class LangChainAgent(GenerativeAgent):
+    id: str  # 唯一id
     plans: PlanQueue = PlanQueue()  # 一天的计划
     schedule: List = []  # 当天的日程
-    loc: str  # 所在位置
-    known_areas = []
+    schedule_summary = ""  # 当天的日程摘要
+    loc: str  # 当前所在位置
+    known_areas = []  # 知道的位置
     emoji: List[str] = []  # emoji
+    has_update_plan: bool = False
+
+    def summarize_related_memories(self, name, desc) -> str:
+        """Summarize memories that are most relevant to an observation."""
+        prompt = PromptTemplate.from_template(
+            "{q1}?\n"
+            "Context from memory:\n"
+            "{relevant_memories}\n"
+            "Relevant context: "
+        )
+        # entity_name = self._get_entity_from_observation(observation)
+        # entity_action = self._get_entity_action(observation, entity_name)
+        q1 = f"What is the relationship between {self.name} and {name}"
+        q2 = f"{name} is {desc}"
+        return self.chain(prompt=prompt).run(q1=q1, queries=[q1, q2]).strip()
+
+    def _generate_reaction(
+            self, observation: Tuple, suffix: str, now: Optional[datetime] = None
+    ) -> str:
+        """对给定的观察或对话行为做出反应。"""
+        prompt = PromptTemplate.from_template(
+            "{agent_summary_description}"
+            + "\nIt is {current_time}."
+            + "\n{agent_name}'s status: {agent_status}"
+            + "\nSummary of relevant context from {agent_name}'s memory:"
+            + "\n{relevant_memories}"
+            + "\nMost recent observations: {most_recent_memories}"
+            + "\nObservation: {observation}"
+            + "\n\n"
+            + suffix
+        )
+        name, desc = observation
+        agent_summary_description = self.get_summary(now=now)
+        relevant_memories_str = self.summarize_related_memories(name, desc)
+        current_time_str = (
+            datetime.now().strftime("%B %d, %Y, %I:%M %p")
+            if now is None
+            else now.strftime("%B %d, %Y, %I:%M %p")
+        )
+        kwargs: Dict[str, Any] = dict(
+            agent_summary_description=agent_summary_description,
+            current_time=current_time_str,
+            relevant_memories=relevant_memories_str,
+            agent_name=self.name,
+            observation=f"{name} is {desc}",
+            agent_status=self.status,
+        )
+        consumed_tokens = self.llm.get_num_tokens(
+            prompt.format(most_recent_memories="", **kwargs)
+        )
+        kwargs[self.memory.most_recent_memories_token_key] = consumed_tokens
+        return self.chain(prompt=prompt).run(**kwargs).strip()
 
     def generate_reaction(
-            self, observation: str, now: Optional[datetime] = None
+            self, observation: Tuple, now: Optional[datetime] = None
     ) -> Tuple[str, str]:
         """React to a given observation."""
         call_to_action_template = (
-                "Should {agent_name} react to the observation, and if so,"
+                "Should {agent_name} react to the observation?, and if so,"
                 + " what would be an appropriate reaction? Respond in one line."
                 + ' If the action is to engage in dialogue, write:\nSAY: "what to say"'
                 + "\notherwise, write:\nREACT: {agent_name}'s reaction (if anything)."
@@ -35,25 +89,29 @@ class LangChainAgent(GenerativeAgent):
         )
         result = full_result.strip().split("\n")[0]
         # AAA
+        name, desc = observation
         self.memory.save_context(
             {},
             {
                 self.memory.add_memory_key: f"{self.name} observed "
-                                            f"{observation} and reacted by {result}",
+                                            f"{name} is {desc} and reacted by {result}",
                 self.memory.now_key: now,
             },
         )
         if "REACT:" in result:
             reaction = self._clean_response(result.split("REACT:")[-1])
+            self.replanning(f"{name} is {desc}", reaction)
             return "REACT", f"{self.name} {reaction}"
         if "SAY:" in result:
             said_value = self._clean_response(result.split("SAY:")[-1])
+            # TODO 修改
+            self.replanning(f"{name} is {desc}", said_value)
             return "SAY", f"{self.name} said {said_value}"
         else:
             return "PASS", result
 
     def generate_dialogue_response(
-            self, observation: str, now: Optional[datetime] = None
+            self, observation: Tuple, now: Optional[datetime] = None
     ) -> Tuple[bool, str]:
         """生成对话内容"""
         call_to_action_template = (
@@ -65,13 +123,14 @@ class LangChainAgent(GenerativeAgent):
             observation, call_to_action_template, now=now
         )
         result = full_result.strip().split("\n")[0]
+        name, desc = observation
         if "GOODBYE:" in result:
             farewell = self._clean_response(result.split("GOODBYE:")[-1])
             self.memory.save_context(
                 {},
                 {
                     self.memory.add_memory_key: f"{self.name} observed "
-                                                f"{observation} and said {farewell}",
+                                                f"{name} is {desc} and said {farewell}",
                     self.memory.now_key: now,
                 },
             )
@@ -82,7 +141,7 @@ class LangChainAgent(GenerativeAgent):
                 {},
                 {
                     self.memory.add_memory_key: f"{self.name} observed "
-                                                f"{observation} and said {response_text}",
+                                                f"{name} is {desc} and said {response_text}",
                     self.memory.now_key: now,
                 },
             )
@@ -90,21 +149,7 @@ class LangChainAgent(GenerativeAgent):
         else:
             return False, result
 
-    def summarize_related_memories(self, observation: str) -> str:
-        """Summarize memories that are most relevant to an observation."""
-        prompt = PromptTemplate.from_template(
-            "{q1}?\n"
-            "Context from memory:\n"
-            "{relevant_memories}\n"
-            "Relevant context: "
-        )
-        entity_name = self._get_entity_from_observation(observation)
-        entity_action = self._get_entity_action(observation, entity_name)
-        q1 = f"What is the relationship between {self.name} and {entity_name}"
-        q2 = f"{entity_name} is {entity_action}"
-        return self.chain(prompt=prompt).run(q1=q1, queries=[q1, q2]).strip()
-
-    def _get_yesterday(self, now: Optional[datetime] = None, offset: int = 0):
+    def _get_date_info(self, now: Optional[datetime] = None, offset: int = 0):
         now = now if now else datetime.now()
         now = now + timedelta(offset)
         _, week, weekday = now.isocalendar()
@@ -123,14 +168,14 @@ class LangChainAgent(GenerativeAgent):
                 "Generate 3-5 brief summaries of {name}'s schedule for yesterday (output format: Time Range: Main Event):"
             )
             summaries = self.chain(prompt).run(name=self.name, schedule_str=schedule_str).strip()
-            yestd, hour, yestw = self._get_yesterday(offset=-1)
+            yestd, hour, yestw = self._get_date_info(offset=-1)
 
             self.schedule_summary = f"On {yestw} {yestd}, {self.name}" + summaries
             self.schedule = []
         return self.schedule_summary
 
     def parse_plan(self, plan_str):
-        p = re.compile(r"(?P<start>\d{1,2}:\d{1,2})[-—](?P<end>\d{1,2}:\d{1,2})\]:\s+(?P<task>.+)")
+        p = re.compile(r"(?P<start>\d{1,2}:\d{1,2})[-—](?P<end>\d{1,2}:\d{1,2})\]?:\s+(?P<task>.+)")
         plans = []
         for plan in plan_str.split("\n"):
             match = p.search(plan)
@@ -139,6 +184,7 @@ class LangChainAgent(GenerativeAgent):
                 if all([isinstance(i, str) and len(i) > 1 for i in info.values()]):
                     plans.append(Plan(**info))
             else:
+                print()
                 logging.warning(f"模型生成的计划无法解析：{plan}")
         return plans
 
@@ -148,25 +194,32 @@ class LangChainAgent(GenerativeAgent):
         summary_description = self.get_summary(now=now)
         schedule_summary = self.get_schedule_summary()
 
-        date, hour, weekd = self._get_yesterday(now=now)
+        date, hour, weekd = self._get_date_info(now=now)
         # 2. 生成粗略规划
         prompt = PromptTemplate.from_template(
             "{summary_description}\n"
             "{schedule_summary}\n"
-            "plan example format:"
-            "[7:14-7:45]: Wake up and complete the morining routine\n"
-            "[7:45-8:35]: Eat breakfast\n"
+            "{name}'s current position is {position}\n"
+            "{name} knows of the following areas: {known_areas}\n"
+            "plan example format:\n"
+            "[7:14-11:00]: Wake up and complete the morining routine\n"
+            "[11:00-12:00]: eat something\n"
             "[8:35-17:10]: Go to school and study\n"
             "[17:10-22:30]: Play CSGO\n"
             "[22:30-7:30]: Go to sleep\n\n"
-            "Today is {weekd} {date}. Here is {name}’s brief plan today in broad strokes from {hour} today:"
+            "Today is {weekd} {date}. Here is {name}’s brief plan today in broad strokes from {hour} today,\n"
+            "plans must be generated from known areas:"
         )
         plans = self.chain(prompt).run(summary_description=summary_description,
                                        schedule_summary=schedule_summary,
+                                       position=self.loc,
+                                       known_areas=self.known_areas,
                                        weekd=weekd,
                                        date=date,
-                                       name=self.name).strip()
+                                       name=self.name,
+                                       hour=hour).strip()
 
+        # plans = '[17:20-17:30]: Cycling to SpaceX Company in the CBD\n[17:30-18:00]: Settle into the workspace, check emails, and organize tasks for the evening.\n[18:00-20:00]: Work on programming tasks and meet with colleagues for any necessary collaboration or discussions.\n[20:00-20:30]: Take a short break, stretch, and have a small dinner.\n[20:30-22:30]: Continue working on programming tasks and complete any pending assignments.\n[22:30-23:00]: Wrap up work for the day, finalize any documentation or notes, and tidy up the workspace.\n[23:00-23:30]: Commute back home.\n[23:30-00:00]: Wind down, relax, and engage in some hobbies or activities Tommie enjoys.\n[00:00-7:14]: Get ready for bed, read a book or watch a TV show to unwind, and go to sleep.'
         rough_plans = self.parse_plan(plans)
         # 3. 将粗略规划保存到计划中
         self.plans.batch_put(rough_plans)
@@ -175,6 +228,7 @@ class LangChainAgent(GenerativeAgent):
         """重新生成计划"""
         prompt = PromptTemplate.from_template(
             "It's {hour}\n"
+            "{name}'s current position is {position}\n"
             "{name}'s status: {status}\n"
             "Observation: {observation}\n"
             "Reaction: {reaction}\n"
@@ -182,9 +236,10 @@ class LangChainAgent(GenerativeAgent):
             "{old_plans}\n\n"
             "Based on {name}'s observation,reaction,and previous plans,make new brief plan today in broad strokes from now on, without any explanations:"
         )
-        date, hour, weekd = self._get_yesterday(now=now)
+        date, hour, weekd = self._get_date_info(now=now)
         old_plans = str(self.plans)
         plans = self.chain(prompt).run(hour=hour,
+                                       position=self.loc,
                                        name=self.name,
                                        status=self.status,
                                        observation=observation,
@@ -194,12 +249,13 @@ class LangChainAgent(GenerativeAgent):
         new_plans = self.parse_plan(plans)
         self.plans = PlanQueue()
         self.plans.batch_put(new_plans)
+        self.has_update_plan = True
+        logging.info(f"更新计划如下: \n{str(self.plans)}")
 
-    def disassemble_plan(self, overall_plan) -> List[Plan]:
+    def disassemble_plan(self, start, end, overall_plan) -> List[Plan]:
         """
         解析计划
         """
-
         prompt = PromptTemplate.from_template(
             "overall plan: {overall_plan}\n"
             "Translate the overall plan into more detailed brief plans, each limited within 5-15 minutes\n"
@@ -207,10 +263,15 @@ class LangChainAgent(GenerativeAgent):
             "plan example format:"
             "[7:14-7:20]: Wake up and complete the morining routine\n"
             "[7:20-7:30]: Eat breakfast\n\n"
-            "Here is actions:"
+            "Here is actions from {start} to {end}:"
         )
-        detailed_plans = self.chain(prompt).run(overall_plan=overall_plan).strip()
+        detailed_plans = self.chain(prompt).run(overall_plan=overall_plan,
+                                                start=start,
+                                                end=end).strip()
+
         detailed_plans = self.parse_plan(detailed_plans)
+        dp_str = "\n".join([str(i) for i in detailed_plans])
+        logging.info(f"将计划:{overall_plan} 拆解为: \n{dp_str}")
         return detailed_plans
 
     def path_finding(self, action, now: Optional[datetime] = None, max_deep=10):
@@ -219,19 +280,21 @@ class LangChainAgent(GenerativeAgent):
 
         prompt = PromptTemplate.from_template(
             "{summary_description}\n"
-            "{name} is currently in The {location})"
+            "{name} is currently in The {location}) "
             "that has {surroundings}\n"
-            "{name} knows of the following areas: {known_areas}"
+            "{name} knows of the following areas: {known_areas}\n"
             "* Prefer to stay in the current area if the activity can be done there\n"
             "{name} is planning to {action}. Which area should {name} go to?\n"
-            "If the area that will to go can complete the plan, write:\nSTOP: area\n"
-            "otherwise, write:\nNEXT: area"
+            "If stay in the current area:\nSTOP: area\n"
+            "otherwise, write:\nMOVE: area"
         )
-        loc_obj = get_loc(self.loc)
-        path_list = [loc_obj]
+        loc_obj = my_map.get_loc(self.loc)
+        path_list = []
 
         known_areas = "、".join(self.known_areas)
-        while loc_obj and not loc_obj.is_leaf():
+        while loc_obj:
+            path_list.append(loc_obj)
+
             if len(path_list) > max_deep:
                 break
             location = str(loc_obj)
@@ -243,18 +306,23 @@ class LangChainAgent(GenerativeAgent):
                                             known_areas=known_areas,
                                             action=action
                                             ).strip()
+            logging.info(f"寻找移动路径的结果: {result}")
+            # TODO 1. 地点去重； 2. 如果2次都是同一地址直接退出
             if "STOP:" in result:
-                _, area = self._clean_response(result.split("STOP:")[-1])
-                loc_obj = get_loc(area)
-                path_list.append(loc_obj)
+                area = self._clean_response(result.split("STOP:")[-1])
+                loc_obj = my_map.get_loc(area)
                 break
-            elif "NEXT:" in result:
-                _, area = self._clean_response(result.split("STOP:")[-1])
-                loc_obj = get_loc(area)
-                path_list.append(loc_obj)
+            elif "MOVE:" in result:
+                area = self._clean_response(result.split("MOVE:")[-1])
+                loc_obj = my_map.get_loc(area)
+                if loc_obj and (loc_obj.is_leaf() or loc_obj == path_list[-1]):
+                    if loc_obj == path_list[-1]:
+                        loc_obj = None
+                    break
             else:
                 break
-            known_areas = ""
+        if loc_obj:
+            path_list.append(loc_obj)
         return path_list
 
     def update_status(self, action, obj_name):
@@ -272,18 +340,42 @@ class LangChainAgent(GenerativeAgent):
         self.status = res
         logging.info(f"{self.name}的状态更新为: {self.status}")
 
-    def acting(self, action, now: Optional[datetime] = None):
+    def moving(self, path_list: List[MyLocation]):
+        """
+        移动，在移动的过程中需要观察
+        """
+        original_loc = path_list[0]
+        original_loc.remove(self)
+        last_loc = path_list[-1]
+        last_loc.accept(self)
+        self.loc = last_loc.name
+
+    def acting(self, action, now: Optional[datetime] = None) -> None:
         # 寻路
+        if not now:
+            now = datetime.now()
+        date, hour, weekd = self._get_date_info(now=now)
+        self.schedule.append(f"{hour}: {action}")
         path_list = self.path_finding(action, now)
         if len(path_list) > 1:
             paths = "->".join([str(path) for path in path_list])
             logging.info(f"{self.name}开始移动，移动轨迹为: {paths}")
-            obj = path_list[-1]
-            self.loc = str(obj)
-            if getattr(obj, "status"):
-                obj.update_status(f"{self.name}'s action is {action}", obj.name)
+            self.moving(path_list)
+            # 需要生成交互对象的状态
+            # obj = path_list[-1]
+            # if getattr(obj, "status"):
+            #     obj.update_status(f"{self.name}'s action is {action}", obj.name)
         else:
             logging.info(f"该行动中不需要进行移动或没有找到合适的地点")
+
+        # 将行动添加到记忆中
+        self.memory.save_context(
+            {},
+            {
+                self.memory.add_memory_key: f"{self.name} is {action}",
+                self.memory.now_key: now,
+            },
+        )
 
     def run_conversation(self, agents: List[GenerativeAgent],
                          initial_observation: str,
@@ -292,13 +384,15 @@ class LangChainAgent(GenerativeAgent):
         mod, observation = agents[1].generate_reaction(initial_observation)
         if mod != "SAY":
             logging.info(f"{agents[1].name}没有回应{self.name}的对话: {observation}")
-            return
+
         turns = 0
+        name = agents[1].name
         while True:
             break_dialogue = False
             for agent in agents:
                 logging.info(observation)
-                stay_in_dialogue, observation = agent.generate_dialogue_response(observation)
+                stay_in_dialogue, observation = agent.generate_dialogue_response((name, observation))
+                name = agent.name
                 # observation = f"{agent.name} said {reaction}"
                 if not stay_in_dialogue:
                     break_dialogue = True
@@ -307,13 +401,13 @@ class LangChainAgent(GenerativeAgent):
             turns += 1
         logging.info(observation)
 
-    def reacting(self, mod, action, agent_list):
+    def reacting(self, mod, action, agent_list) -> None:
         """行动"""
         # 1. 解析行动
         # 2. 执行行动
         if mod == "SAY":
             logging.info(f"{self.name}做出的反应是对话")
-            self.run_conversation(action, agent_list)
+            self.run_conversation(action, agent_list[:1])
         elif mod == "REACT":
             logging.info(f"{self.name}做出的反应是行动: {action}")
             self.acting(action)
@@ -321,8 +415,27 @@ class LangChainAgent(GenerativeAgent):
         else:
             logging.info(f"{self.name}没有做出反应: {action}")
 
-    def start(self, now: Optional[datetime] = None, time_step: int = 60):
-        logging.info(f"{self.name}在{str(now)}的日志".center(66, "="))
+    def observing(self, now: Optional[datetime] = None):
+        """
+        观察-->前端实现，视野范围内的其它智能体和对象存入这个他的记忆
+        """
+        loc_obj: MyLocation = my_map.get_loc(self.loc)
+        # 将观察结果添加到记忆中
+        obj_list = loc_obj.viewed(self)
+        for obj in obj_list:
+            self.memory.save_context(
+                {},
+                {
+                    self.memory.add_memory_key: f"{self.name} observed "
+                                                f"{obj.name} is {obj.status}",
+                    self.memory.now_key: now,
+                },
+            )
+        return obj_list
+
+    def start(self, now: Optional[datetime] = None, time_step: int = 10):
+        now = now if now else datetime.now()
+        logging.info(f"{self.name}在{now.strftime('%Y-%m-%d')}的日志".center(66, "="))
         # 1. 制定计划
         self.planning(now)
         logging.info(f"制定一天的粗略计划如下: \n{str(self.plans)}")
@@ -335,11 +448,11 @@ class LangChainAgent(GenerativeAgent):
             # 获取计划
             plan = self.plans.get()
             # 拆解计划
-            detailed_plans = self.disassemble_plan(str(plan))
+            start, end, task = plan.get_info()
+            detailed_plans = self.disassemble_plan(start, end, str(plan))
             # 执行计划
             for dp in detailed_plans:
                 start, end, task = dp.get_info()
-                self.status = task
                 # 打印计划信息
                 now = datetime.now()
                 # 执行计划
@@ -350,26 +463,15 @@ class LangChainAgent(GenerativeAgent):
                 # 感知周围环境
                 obv_agent_list = []
                 if used_time // time_step > 0:
-                    obv_agent_list = self.perceiving(now)
-                agent = obv_agent_list[0]
+                    obv_agent_list = self.observing()
                 # observations = "\n".join([f"{obj.name}，{obj.desc}" for obj in agent_list])
                 if obv_agent_list:
                     # 判断采取反应还是继续执行计划
-                    mod, action = self.generate_reaction(f"{self.name} saw {agent.name} is {agent.status}", now)
+                    agent = obv_agent_list[0]
+                    mod, action = self.generate_reaction((agent.name, agent.status), now)
                     date_str = now.strftime("%Y-%m-%d %H:%M:%S")
                     logging.info(f"{date_str}: {self.name}观察到: \n{agent.status}")
                     self.reacting(mod, action, obv_agent_list)
-                    # 如果需要做出反应，则更新计划
-                    flag = False
-                    if flag:
-                        self._replan(agent.status, action)
-                        self.reacting(mod, action, agent)
-                        flag_break = True
-
-                # 把行动添加到记忆中
-                self.brain.memorizing(self.status, now)
-                self.schedule.append(f"{self.status}")
-                # 如果需要更新计划，则退出循环
-                if flag_break:
-                    break
-
+                    if self.has_update_plan:
+                        self.has_update_plan = False
+                        break
