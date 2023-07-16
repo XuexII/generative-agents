@@ -23,7 +23,11 @@ os.environ["OPENAI_API_KEY"] = ""
 USER_NAME = "Person A"  # The name you want to use when interviewing the agent.
 LLM = ChatOpenAI(openai_api_key="",
                  max_tokens=1500)  # Can be any LLM you want.
-
+"""
+1. 不用添加搜索历史
+2. 路径死循环的问题
+3. 地点解析的问题
+"""
 
 def relevance_score_fn(score: float) -> float:
     """Return a similarity score on a scale [0, 1]."""
