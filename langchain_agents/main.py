@@ -18,10 +18,10 @@ logging.basicConfig(level="INFO")
 
 os.environ["http_proxy"] = "http://127.0.0.1:7890"
 os.environ["https_proxy"] = "http://127.0.0.1:7890"
-os.environ["OPENAI_API_KEY"] = ""
+os.environ["OPENAI_API_KEY"] = "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"
 
 USER_NAME = "Person A"  # The name you want to use when interviewing the agent.
-LLM = ChatOpenAI(openai_api_key="",
+LLM = ChatOpenAI(openai_api_key="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",
                  max_tokens=1500)  # Can be any LLM you want.
 
 

@@ -79,10 +79,11 @@ class LangChainAgent(GenerativeAgent):
         """React to a given observation."""
         call_to_action_template = (
                 "Should {agent_name} react to the observation?, and if so,"
-                + " what would be an appropriate reaction? Respond in one line."
-                + ' If the action is to engage in dialogue, write:\nSAY: "what to say"'
+                + " what would be an appropriate reaction? Respond in one line.\n"
+                  "If do nothing,write:\nPASS:None\n"
+                + 'If reaction implies interactive behavior, must generate the words that Tommie might say, write:\nSAY: "what to say"\n'
                 + "\notherwise, write:\nREACT: {agent_name}'s reaction (if anything)."
-                + "\nEither do nothing, react, or say something but not both.\n\n"
+                + "\nEither do nothing, react, or say something but not both."
         )
         full_result = self._generate_reaction(
             observation, call_to_action_template, now=now
@@ -210,16 +211,16 @@ class LangChainAgent(GenerativeAgent):
             "Today is {weekd} {date}. Here is {name}’s brief plan today in broad strokes from {hour} today,\n"
             "plans must be generated from known areas:"
         )
-        plans = self.chain(prompt).run(summary_description=summary_description,
-                                       schedule_summary=schedule_summary,
-                                       position=self.loc,
-                                       known_areas=self.known_areas,
-                                       weekd=weekd,
-                                       date=date,
-                                       name=self.name,
-                                       hour=hour).strip()
+        # plans = self.chain(prompt).run(summary_description=summary_description,
+        #                                schedule_summary=schedule_summary,
+        #                                position=self.loc,
+        #                                known_areas=self.known_areas,
+        #                                weekd=weekd,
+        #                                date=date,
+        #                                name=self.name,
+        #                                hour=hour).strip()
 
-        # plans = '[17:20-17:30]: Cycling to SpaceX Company in the CBD\n[17:30-18:00]: Settle into the workspace, check emails, and organize tasks for the evening.\n[18:00-20:00]: Work on programming tasks and meet with colleagues for any necessary collaboration or discussions.\n[20:00-20:30]: Take a short break, stretch, and have a small dinner.\n[20:30-22:30]: Continue working on programming tasks and complete any pending assignments.\n[22:30-23:00]: Wrap up work for the day, finalize any documentation or notes, and tidy up the workspace.\n[23:00-23:30]: Commute back home.\n[23:30-00:00]: Wind down, relax, and engage in some hobbies or activities Tommie enjoys.\n[00:00-7:14]: Get ready for bed, read a book or watch a TV show to unwind, and go to sleep.'
+        plans = "[18:30-19:30]: Tommie settles into their workspace and checks emails and messages.\n[19:30-20:00]: Tommie attends a team meeting to discuss ongoing projects and tasks.\n[20:00-20:30]: Tommie starts working on their assigned programming tasks for the day.\n[20:30-21:00]: Tommie takes a short break and chats with colleagues about non-work related topics.\n[21:00-22:30]: Tommie continues working on programming tasks, focusing on debugging and testing.\n[22:30-23:00]: Tommie wraps up the day's work, organizes files, and prepares for tomorrow.\n[23:00-23:15]: Tommie says goodbye to coworkers and leaves the SpaceX office.\n[23:15-23:30]: Tommie walks or takes transportation back to Tommie's house.\n[23:30-00:00]: Tommie arrives home and unwinds, possibly engaging in a hobby or watching TV.\n[00:00-00:30]: Tommie gets ready for bed, completing the evening routine.\n[00:30-07:00]: Tommie sleeps and rests for the night."
         rough_plans = self.parse_plan(plans)
         # 3. 将粗略规划保存到计划中
         self.plans.batch_put(rough_plans)
@@ -259,13 +260,13 @@ class LangChainAgent(GenerativeAgent):
         prompt = PromptTemplate.from_template(
             "overall plan: {overall_plan}\n"
             "Translate the overall plan into more detailed brief plans, each limited within 5-15 minutes\n"
-            "Break down the overall plan into executable and concise actions, each action limited to 5-15 minutes."
-            "plan example format:"
+            "plan example format:\n"
             "[7:14-7:20]: Wake up and complete the morining routine\n"
             "[7:20-7:30]: Eat breakfast\n\n"
-            "Here is actions from {start} to {end}:"
+            "Here is {name}'s detailed plans from {start} to {end}:"
         )
         detailed_plans = self.chain(prompt).run(overall_plan=overall_plan,
+                                                name=self.name,
                                                 start=start,
                                                 end=end).strip()
 
@@ -421,7 +422,9 @@ class LangChainAgent(GenerativeAgent):
         """
         loc_obj: MyLocation = my_map.get_loc(self.loc)
         # 将观察结果添加到记忆中
-        obj_list = loc_obj.viewed(self)
+        obj_list = []
+        if loc_obj:
+            obj_list = loc_obj.viewed(self)
         for obj in obj_list:
             self.memory.save_context(
                 {},
