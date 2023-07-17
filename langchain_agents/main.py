@@ -202,11 +202,10 @@ tommie_observations = [
     "He is at work now"
 ]
 
-for observation in tommie_observations:
-    tommie.memory.add_memory(observation)
+# for observation in tommie_observations:
+#     tommie.memory.add_memory(observation)
+tommie.init_agent("./", tommie_observations)
 
-print("tommie 初始化完成")
-tommie.init_log("./tommie.txt")
 john = LangChainAgent(name="John",
                       age=24,
                       traits="wise, resourceful, humorous",  # You can add more persistent traits here
@@ -229,14 +228,12 @@ john_observations = [
     "He is at work now"
 ]
 
-for observation in john_observations:
-    john.memory.add_memory(observation)
+# for observation in john_observations:
+#     john.memory.add_memory(observation)
 
-john.init_log("./jhon.txt")
-print("john 初始化完成")
+john.init_agent("./", john_observations)
+
 my_map.add_guest([tommie, john])
-
-print("启动。。。")
 
 
 def my_excepthook(args):

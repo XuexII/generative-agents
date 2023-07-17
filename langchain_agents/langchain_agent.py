@@ -1,12 +1,17 @@
-from typing import List, Dict, Optional, Tuple, Union, Any
-from blocks.other_blocks import Plan, PlanQueue
-from datetime import datetime, timedelta
-from langchain.prompts import PromptTemplate
-import regex as re
 import logging
-from blocks.location_block import MyLocation, my_map
+import os
 import time
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional, Tuple, Any
+
+import regex as re
+from langchain.prompts import PromptTemplate
+
+from blocks.location_block import MyLocation, my_map
+from blocks.other_blocks import Plan, PlanQueue
 from langchain_agents.generative_agent import GenerativeAgent
+from utils.utils_log import Logger
+from langchain import LLMChain
 
 weekday_map = {"1": "Monday", "2": "Tuesday", "3": "Wednesday",
                "4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday"}
@@ -23,11 +28,23 @@ class LangChainAgent(GenerativeAgent):
     has_update_plan: bool = False
     log_file: Any = None
 
-    def init_log(self, log_file):
-        self.log_file = open(log_file, "a", encoding="utf-8")
+    def chain(self, prompt: PromptTemplate) -> LLMChain:
+        # return LLMChain(
+        #     llm=self.llm, prompt=prompt, verbose=self.verbose, memory=self.memory
+        # )
+        return LLMChain(
+            llm=self.llm, prompt=prompt, verbose=self.verbose, memory=None
+        )
+    
+    def init_agent(self, log_dir, memories: List[str]):
+        os.makedirs(log_dir, exist_ok=True)
+        logger = Logger(os.path.join(log_dir, f"{self.name}.txt"),
+                        clevel=logging.INFO, flevel=logging.INFO, fmt='%(message)s')
+        self.logger = logger
+        for memory in memories:
+            self.memory.add_memory(memory)
         
-    def write_log(self, info):
-        self.log_file.write(info + "\n")
+        self.logger.info(f"{self.name}初始化成功")
 
     def summarize_related_memories(self, name, desc) -> str:
         """Summarize memories that are most relevant to an observation."""
@@ -193,7 +210,7 @@ class LangChainAgent(GenerativeAgent):
                     plans.append(Plan(**info))
             else:
                 print()
-                self.write_log(f"模型生成的计划无法解析：{plan}")
+                self.logger.info(f"模型生成的计划无法解析：{plan}")
         return plans
 
     def planning(self, now: Optional[datetime] = None):
@@ -257,7 +274,7 @@ class LangChainAgent(GenerativeAgent):
         self.plans = PlanQueue()
         self.plans.batch_put(new_plans)
         self.has_update_plan = True
-        self.write_log(f"更新计划如下: \n{str(self.plans)}")
+        self.logger.info(f"更新计划如下: \n{str(self.plans)}")
 
     def disassemble_plan(self, start, end, plan) -> List[Plan]:
         """
@@ -278,7 +295,7 @@ class LangChainAgent(GenerativeAgent):
 
         detailed_plans = self.parse_plan(detailed_plans)
         dp_str = "\n".join([str(i) for i in detailed_plans])
-        self.write_log(f"将计划:{plan} 拆解为: \n{dp_str}")
+        self.logger.info(f"将计划:{plan} 拆解为: \n{dp_str}")
         return detailed_plans
 
     def path_finding(self, action, now: Optional[datetime] = None, max_deep=10):
@@ -313,7 +330,7 @@ class LangChainAgent(GenerativeAgent):
                                             known_areas=known_areas,
                                             action=action
                                             ).strip()
-            self.write_log(f"寻找移动路径的结果: {result}")
+            self.logger.info(f"寻找移动路径的结果: {result}")
             # TODO 1. 地点去重； 2. 如果2次都是同一地址直接退出
             if "STOP:" in result:
                 # area = self._clean_response(result.split("STOP:")[-1])
@@ -346,7 +363,7 @@ class LangChainAgent(GenerativeAgent):
                                      action=action,
                                      obj_name=obj_name).strip()
         self.status = res
-        self.write_log(f"{self.name}的状态更新为: {self.status}")
+        self.logger.info(f"{self.name}的状态更新为: {self.status}")
 
     def moving(self, path_list: List[MyLocation]):
         """
@@ -368,14 +385,14 @@ class LangChainAgent(GenerativeAgent):
         path_list = self.path_finding(action, now)
         if len(path_list) > 1:
             paths = "->".join([path.get_all_path() for path in path_list])
-            self.write_log(f"{self.name}开始移动，移动轨迹为: {paths}")
+            self.logger.info(f"{self.name}开始移动，移动轨迹为: {paths}")
             self.moving(path_list)
             # 需要生成交互对象的状态
             # obj = path_list[-1]
             # if getattr(obj, "status"):
             #     obj.update_status(f"{self.name}'s action is {action}", obj.name)
         else:
-            self.write_log(f"该行动中不需要进行移动或没有找到合适的地点")
+            self.logger.info(f"该行动中不需要进行移动或没有找到合适的地点")
 
         # 将行动添加到记忆中
         self.memory.save_context(
@@ -392,14 +409,14 @@ class LangChainAgent(GenerativeAgent):
         """Runs a conversation between agents."""
         mod, observation = agents[1].generate_reaction((self.name, initial_observation))
         if mod != "SAY":
-            self.write_log(f"{agents[1].name}没有回应{self.name}的对话: {observation}")
+            self.logger.info(f"{agents[1].name}没有回应{self.name}的对话: {observation}")
 
         turns = 0
         name = agents[1].name
         while True:
             break_dialogue = False
             for agent in agents:
-                self.write_log(observation)
+                self.logger.info(observation)
                 stay_in_dialogue, observation = agent.generate_dialogue_response((name, observation))
                 name = agent.name
                 # observation = f"{agent.name} said {reaction}"
@@ -408,21 +425,21 @@ class LangChainAgent(GenerativeAgent):
             if turns > max_turns or break_dialogue:
                 break
             turns += 1
-        self.write_log(observation)
+        self.logger.info(observation)
 
     def reacting(self, mod, action, agent_list) -> None:
         """行动"""
         # 1. 解析行动
         # 2. 执行行动
         if mod == "SAY":
-            self.write_log(f"{self.name}做出的反应是对话")
+            self.logger.info(f"{self.name}做出的反应是对话")
             self.run_conversation([self, agent_list[0]], action)
         elif mod == "REACT":
-            self.write_log(f"{self.name}做出的反应是行动: {action}")
+            self.logger.info(f"{self.name}做出的反应是行动: {action}")
             self.acting(action)
             self.status = action
         else:
-            self.write_log(f"{self.name}没有做出反应: {action}")
+            self.logger.info(f"{self.name}没有做出反应: {action}")
 
     def observing(self, now: Optional[datetime] = None):
         """
@@ -446,14 +463,14 @@ class LangChainAgent(GenerativeAgent):
 
     def start(self, now: Optional[datetime] = None, time_step: int = 10):
         now = now if now else datetime.now()
-        self.write_log(f"{self.name}在{now.strftime('%Y-%m-%d')}的日志".center(66, "="))
+        self.logger.info(f"{self.name}在{now.strftime('%Y-%m-%d')}的日志".center(66, "="))
         # 1. 制定计划
         self.planning(now)
-        self.write_log(f"制定一天的粗略计划如下: \n{str(self.plans)}")
+        self.logger.info(f"制定一天的粗略计划如下: \n{str(self.plans)}")
         start_time = time.time()
         # 2. 执行计划，并在每个时间步感知周围环境
         #    2.1 将自己的行动及感知到的信息保存到记忆中
-        self.write_log("=" * 66 + "\n")
+        self.logger.info("=" * 66 + "\n")
         # TODO 需要保证不会陷入死循环
         while not self.plans.empty():
             # 获取计划
@@ -467,7 +484,7 @@ class LangChainAgent(GenerativeAgent):
                 # 打印计划信息
                 now = datetime.now()
                 # 执行计划
-                self.write_log(f"{start}-{end}: {task}")
+                self.logger.info(f"{start}-{end}: {task}")
                 self.acting(task)
                 end_time = time.time()
                 used_time = end_time - start_time
@@ -481,13 +498,9 @@ class LangChainAgent(GenerativeAgent):
                     agent = obv_agent_list[0]
                     mod, action = self.generate_reaction((agent.name, agent.status), now)
                     date_str = now.strftime("%Y-%m-%d %H:%M:%S")
-                    self.write_log(f"{date_str}: {self.name}观察到: {agent.name} is {agent.status}")
+                    self.logger.info(f"{date_str}: {self.name}观察到: {agent.name} is {agent.status}")
                     # 执行反应动作
                     self.reacting(mod, action, obv_agent_list)
                     if self.has_update_plan:
                         self.has_update_plan = False
                         break
-
-    def __del__(self):
-        if self.log_file:
-            self.log_file.close()
