@@ -8,19 +8,21 @@ type_map = {"1": "空间", "2": "物品"}
 
 class Res(BaseModel):
     name: str  # 名称
+    desc: str = ""  # 描述
     status: str = ""  # 状态
 
     def __str__(self):
-        return self.name
+        return f"{self.name}({self.desc})"
 
 
 class MyLocation(BaseModel):
     name: str  # 地名
     type: str  # 地点类型
-    owner: Any = None  # 最外层的空间
-    pos: Optional[Tuple] = None  # 坐标
+    desc: Optional[str] = None  # 点的描述
+    owner: Any = None  # 父节点
+    coord: Optional[Tuple] = None  # 坐标
     layout: List[Res] = []  # 陈设的物品
-    subspace: List = []  # 子空间
+    subspace: List = []  # 子节点
     guest: Dict = {}  # 来客
 
     class Config:
@@ -85,7 +87,7 @@ class MyLocation(BaseModel):
         """
         self.layout.append(obj)
 
-    def __str__(self):
+    def get_all_path(self):
         path = [self.name]
         owner: MyLocation = self.owner
         while isinstance(owner, MyLocation):
@@ -93,6 +95,11 @@ class MyLocation(BaseModel):
             owner = owner.owner
 
         return ":".join(path[::-1])
+
+    def __str__(self):
+        if self.desc:
+            return f"{self.name}({self.desc})"
+        return self.name
 
     def __hash__(self):
         return hash(f"{self.name}-{self.type}")
@@ -143,7 +150,7 @@ class MyMap:
 
     def get_loc(self, name: str, default=None) -> MyLocation:
         """
-        根据名称获取地点
+        根据名称获取地点  TODO 修改为通过坐标获取地点
         """
         return self.locations.get(name, default)
 
