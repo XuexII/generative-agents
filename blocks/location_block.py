@@ -2,18 +2,9 @@ from typing import List, Dict, Tuple, Optional, Any
 
 from pydantic import BaseModel, Extra
 from queue import Queue
+from blocks.things_block import MyThing
 
 type_map = {"1": "空间", "2": "物品"}
-
-
-class Res(BaseModel):
-    name: str  # 名称
-    desc: str = ""  # 描述
-    status: str = ""  # 状态
-
-    def __str__(self):
-        return f"{self.name}({self.desc})"
-
 
 class MyLocation(BaseModel):
     name: str  # 地名
@@ -21,7 +12,7 @@ class MyLocation(BaseModel):
     desc: Optional[str] = None  # 点的描述
     owner: Any = None  # 父节点
     coord: Optional[Tuple] = None  # 坐标
-    layout: List[Res] = []  # 陈设的物品
+    layout: List[MyThing] = []  # 陈设的物品
     subspace: List = []  # 子节点
     guest: Dict = {}  # 来客
 
@@ -132,7 +123,7 @@ class MyMap:
             for loc in locs:
                 name = loc["name"]
                 subspace = loc.pop("subspace", [])
-                loc["layout"] = [Res(**i) for i in loc.get("layout", [])]
+                loc["layout"] = [MyThing(**i) for i in loc.get("layout", [])]
                 loc["owner"] = owner
                 loc_obj = MyLocation(**loc)
                 if isinstance(owner, MyLocation):

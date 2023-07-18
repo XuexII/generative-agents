@@ -12,6 +12,7 @@ from blocks.other_blocks import Plan, PlanQueue
 from langchain_agents.generative_agent import GenerativeAgent
 from utils.utils_log import Logger
 from langchain import LLMChain
+from blocks.things_block import MyThing
 
 weekday_map = {"1": "Monday", "2": "Tuesday", "3": "Wednesday",
                "4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday"}
@@ -24,7 +25,7 @@ class LangChainAgent(GenerativeAgent):
     schedule_summary = ""  # 当天的日程摘要
     loc: str  # 当前所在位置
     known_areas: List = []  # 知道的位置
-    emoji: List[str] = []  # emoji
+    emoji: str = ""  # emoji
     has_update_plan: bool = False
     log_file: Any = None
     logger: Optional[logging.RootLogger] = None
@@ -103,7 +104,7 @@ class LangChainAgent(GenerativeAgent):
     ) -> Tuple[str, str]:
         """React to a given observation."""
         call_to_action_template = (
-                "{name} can choose to do nothing, do something or say something react to the observation. Reaction should be very very brief\n"
+                "{agent_name} can choose to do nothing, do something or say something react to the observation. Reaction should be very very brief\n"
                 "If do nothing,write:\nPASS:None\n"
                 + 'If reaction implies interactive behavior, must generate the words that Tommie might say, write:\nSAY: "what to say"\n'
                 + "\notherwise, write:\nREACT: what will reaction"
@@ -309,10 +310,10 @@ class LangChainAgent(GenerativeAgent):
             "{name} is currently in The {location}, "
             "that has {surroundings}\n"
             "{name} knows of the following areas: {known_areas}\n"
-            "* Prefer to stay in the current area if the activity can be done there\n\n"
-            "{name} is planning to {action}. Which area should {name} go to?\n"
+            "* Prefer to stay in the current area if the activity can be done there\n"
+            "{name} is planning to {action}. Which area should {name} go to?\n\n"
             "If dont' need change the area, write:\nSTOP: None\n"
-            "Otherwise, write:\nMOVE: area"
+            "Otherwise, write:\nMOVE: area\n"
         )
         loc_obj = my_map.get_loc(self.loc)
         path_list = []
@@ -352,20 +353,37 @@ class LangChainAgent(GenerativeAgent):
             path_list.append(loc_obj)
         return path_list
 
-    def update_status(self, action, obj_name):
+    def update_thing_status(self, action, thing_obj: MyThing):
         """
         更新状态
         """
+        # 如果是自身状态，直接更新为具体的动作
         prompt = PromptTemplate.from_template(
-            "{action}\n"
-            "What happens to the state of the {obj_name}?\n"
-            "give the {obj_name}'s state and emoji that matches the state. (example format: state: close)"
+            "The {name}'s action is {action}\n"
+            "What happens to the state of the {obj_name}?(example format: state: close)\n\n"
         )
-        # res = self.chain(prompt).run(name=self.name,
-        #                              action=action,
-        #                              obj_name=obj_name).strip()
-        self.status = action
-        self.logger.info(f"{self.name}的状态更新为: {self.status}")
+        state = self.chain(prompt).run(name=self.name,
+                                     action=action,
+                                     obj_name=thing_obj.name).strip()
+        if state and state.startswith("state:"):
+            state = state.replace("state:", "").strip()
+            thing_obj.status = state
+            self.logger.info(f"{thing_obj.name}的状态更新为: {self.status}")
+        else:
+            self.logger.info(f"{thing_obj.name}的状态更新失败，无法解析结果：{state}")
+
+    def get_emoji(self, task, action):
+        """生成emoji"""
+        prompt = PromptTemplate.from_template(
+            "The {name}'s action: {action}\n\n"
+            "Here is the emoji used to represent {name}'s action:"
+        )
+        if task:
+            action = f"{task}:{action}"
+        emoji = self.chain(prompt).run(name=self.name,
+                                     action=action).strip()
+        self.emoji = emoji
+        self.logger.info(f"更新{self.name}的emoji: {self.emoji}")
 
     def moving(self, path_list: List[MyLocation]):
         """
@@ -432,7 +450,7 @@ class LangChainAgent(GenerativeAgent):
         self.logger.info(observation)
         self.logger.info(f"对话结束".center(66, "="))
 
-    def reacting(self, mod, action, agent_list) -> None:
+    def reacting(self, mod, task, action, agent_list) -> None:
         """行动"""
         # 1. 解析行动
         # 2. 执行行动
@@ -441,10 +459,16 @@ class LangChainAgent(GenerativeAgent):
             self.run_conversation([self, agent_list[0]], action)
         elif mod == "REACT":
             self.logger.info(f"{self.name}做出的反应是行动: {action}")
-            self.acting(action)
+            if task:
+                self.acting(f"{task}: {action}")
+            else:
+                self.acting(action)
         else:
             self.logger.info(f"{self.name}没有做出反应: {action}")
-        self.update_status(action, self.name)
+        # 更新状态
+        self.status = action
+        # 更新emoji
+        self.get_emoji(task, action)
 
     def observing(self, now: Optional[datetime] = None):
         """
@@ -486,14 +510,13 @@ class LangChainAgent(GenerativeAgent):
             # 执行计划
             for dp in detailed_plans:
                 time.sleep(10)
-                start, end, task = dp.get_info()
+                start, end, action = dp.get_info()
                 # 打印计划信息
                 now = datetime.now()
                 # 执行计划
                 self.logger.info(f"执行计划".center(66, "="))
-                self.logger.info(f"{self.name}的行动: {start}-{end}: {task}")
-                self.reacting("REACT", task, [])
-                # self.acting(task)
+                self.logger.info(f"{self.name}的行动: {start}-{end}: {action}")
+                self.reacting("REACT", task, action, [])
                 self.logger.info(f"执行计划完成".center(66, "="))
                 self.logger.info("\n")
                 end_time = time.time()
@@ -511,7 +534,7 @@ class LangChainAgent(GenerativeAgent):
                     self.logger.info(f"{date_str}: {self.name}观察到: {agent.name} is {agent.status}")
                     mod, action = self.generate_reaction((agent.name, agent.status), now)
                     # 执行反应动作
-                    self.reacting(mod, action, obv_agent_list)
+                    self.reacting(mod, None, action, obv_agent_list)
                     self.logger.info(f"对观察结果反应完成".center(66, "="))
                     self.logger.info("\n")
                     if self.has_update_plan:
