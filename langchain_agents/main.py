@@ -16,11 +16,11 @@ import logging
 import threading
 import time
 
-log_path = "./log.txt"
-logging.basicConfig(format='%(asctime)s %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S',
-                    handlers=[logging.FileHandler(log_path, encoding='utf-8')],
-                    level="INFO")
+# log_path = "./log.txt"
+# logging.basicConfig(format='%(asctime)s %(message)s',
+#                     datefmt='%Y-%m-%d %H:%M:%S',
+#                     handlers=[logging.FileHandler(log_path, encoding='utf-8')],
+#                     level="INFO")
 
 os.environ["http_proxy"] = "http://127.0.0.1:7890"
 os.environ["https_proxy"] = "http://127.0.0.1:7890"
@@ -241,10 +241,11 @@ def my_excepthook(args):
 
 threading.excepthook = my_excepthook
 tommie.start()
-for agent in [tommie, john]:
-    thread = threading.Thread(target=agent.start, daemon=True)
-    thread.start()
-    # thread.join()
 
-while True:
-    time.sleep(1)
+# for agent in [tommie, john]:
+#     thread = threading.Thread(target=agent.start, daemon=True)
+#     thread.start()
+#     # thread.join()
+#
+# while True:
+#     time.sleep(1)
