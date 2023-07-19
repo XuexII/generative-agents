@@ -240,12 +240,12 @@ def my_excepthook(args):
 
 
 threading.excepthook = my_excepthook
-tommie.start()
+# tommie.start()
 
-# for agent in [tommie, john]:
-#     thread = threading.Thread(target=agent.start, daemon=True)
-#     thread.start()
-#     # thread.join()
-#
-# while True:
-#     time.sleep(1)
+for agent in [tommie, john]:
+    thread = threading.Thread(target=agent.start, daemon=True)
+    thread.start()
+    # thread.join()
+
+while True:
+    time.sleep(1)
