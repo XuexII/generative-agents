@@ -24,7 +24,7 @@ class LangChainAgent(GenerativeAgent):
     schedule_summary = ""  # 当天的日程摘要
     loc: str  # 当前所在位置
     known_areas: List = []  # 知道的位置
-    emoji: List[str] = []  # emoji
+    emoji: str = ""  # emoji
     has_update_plan: bool = False
     log_file: Any = None
     logger: Optional[logging.RootLogger] = None
@@ -103,11 +103,11 @@ class LangChainAgent(GenerativeAgent):
     ) -> Tuple[str, str]:
         """React to a given observation."""
         call_to_action_template = (
-                "{name} can choose to do nothing, do something or say something react to the observation. Reaction should be very very brief\n"
+                "{agent_name} can choose to do nothing, do something or say something react to the observation. Reaction must be very very brief\n"
                 "If do nothing,write:\nPASS:None\n"
-                + 'If reaction implies interactive behavior, must generate the words that Tommie might say, write:\nSAY: "what to say"\n'
-                + "\notherwise, write:\nREACT: what will reaction"
-                + "\nEither do nothing, react, or say something but not both."
+                + 'If say something, must generate the words that {agent_name} might say, write:\nSAY: what to say\n'
+                + "otherwise, write:\nREACT: what to do"
+                + "Either do nothing, do something, or say something but not both.\n\n"
         )
         full_result = self._generate_reaction(
             observation, call_to_action_template, now=now
@@ -140,7 +140,7 @@ class LangChainAgent(GenerativeAgent):
     ) -> Tuple[bool, str]:
         """生成对话内容"""
         call_to_action_template = (
-            "What would {agent_name} say? To end the conversation, write:"
+            "What would {agent_name} say? The reply must be very very brief. To end the conversation, write:"
             ' GOODBYE: "what to say". Otherwise to continue the conversation,'
             ' write: SAY: "what to say next"\n\n'
         )
@@ -209,7 +209,6 @@ class LangChainAgent(GenerativeAgent):
                 if all([isinstance(i, str) and len(i) > 1 for i in info.values()]):
                     plans.append(Plan(**info))
             else:
-                print()
                 self.logger.info(f"模型生成的计划无法解析：{plan}")
         return plans
 
@@ -311,8 +310,8 @@ class LangChainAgent(GenerativeAgent):
             "{name} knows of the following areas: {known_areas}\n"
             "* Prefer to stay in the current area if the activity can be done there\n\n"
             "{name} is planning to {action}. Which area should {name} go to?\n"
-            "If dont' need change the area, write:\nSTOP: None\n"
-            "Otherwise, write:\nMOVE: area"
+            "If dont' need go to other areas, write:\nSTOP: None\n"
+            "Otherwise, write:\nMOVE: area\n\n"
         )
         loc_obj = my_map.get_loc(self.loc)
         path_list = []
@@ -352,9 +351,9 @@ class LangChainAgent(GenerativeAgent):
             path_list.append(loc_obj)
         return path_list
 
-    def update_status(self, action, obj_name):
+    def update_thing_status(self, action, obj_name):
         """
-        更新状态
+        更新物体的状态状态
         """
         prompt = PromptTemplate.from_template(
             "{action}\n"
@@ -366,6 +365,16 @@ class LangChainAgent(GenerativeAgent):
         #                              obj_name=obj_name).strip()
         self.status = action
         self.logger.info(f"{self.name}的状态更新为: {self.status}")
+
+    def get_emoji(self, action):
+        prompt = PromptTemplate.from_template(
+            "The {name}'s action is:{action}\n\n"
+            "Here is the emoji that matches the {name}'s action:"
+        )
+        emoji = self.chain(prompt).run(name=self.name,
+                                       action=action).strip()
+        self.emoji = emoji
+        self.logger.info(f"{self.name}的emoji已经更新: {self.emoji}")
 
     def moving(self, path_list: List[MyLocation]):
         """
@@ -432,19 +441,28 @@ class LangChainAgent(GenerativeAgent):
         self.logger.info(observation)
         self.logger.info(f"对话结束".center(66, "="))
 
-    def reacting(self, mod, action, agent_list) -> None:
+    def reacting(self, mod, task, action, agent_list) -> None:
         """行动"""
         # 1. 解析行动
         # 2. 执行行动
         if mod == "SAY":
             self.logger.info(f"{self.name}做出的反应是对话")
+            self.logger.info(f"{action}")
             self.run_conversation([self, agent_list[0]], action)
         elif mod == "REACT":
             self.logger.info(f"{self.name}做出的反应是行动: {action}")
-            self.acting(action)
+            if task:
+                self.acting(f"{task}({action})")
+            else:
+                self.acting(action)
         else:
             self.logger.info(f"{self.name}没有做出反应: {action}")
-        self.update_status(action, self.name)
+
+        # 更新状态
+        self.status = action
+        # 更新emoji
+        self.get_emoji(f"{task}({action})" if task else action)
+        # self.update_status(action, self.name)
 
     def observing(self, now: Optional[datetime] = None):
         """
@@ -486,14 +504,13 @@ class LangChainAgent(GenerativeAgent):
             # 执行计划
             for dp in detailed_plans:
                 time.sleep(10)
-                start, end, task = dp.get_info()
+                start, end, action = dp.get_info()
                 # 打印计划信息
                 now = datetime.now()
                 # 执行计划
                 self.logger.info(f"执行计划".center(66, "="))
-                self.logger.info(f"{self.name}的行动: {start}-{end}: {task}")
-                self.reacting("REACT", task, [])
-                # self.acting(task)
+                self.logger.info(f"{self.name}的行动: {start}-{end}: {action}")
+                self.reacting("REACT", task, action, [])
                 self.logger.info(f"执行计划完成".center(66, "="))
                 self.logger.info("\n")
                 end_time = time.time()
@@ -511,7 +528,7 @@ class LangChainAgent(GenerativeAgent):
                     self.logger.info(f"{date_str}: {self.name}观察到: {agent.name} is {agent.status}")
                     mod, action = self.generate_reaction((agent.name, agent.status), now)
                     # 执行反应动作
-                    self.reacting(mod, action, obv_agent_list)
+                    self.reacting(mod, None, action, obv_agent_list)
                     self.logger.info(f"对观察结果反应完成".center(66, "="))
                     self.logger.info("\n")
                     if self.has_update_plan:
