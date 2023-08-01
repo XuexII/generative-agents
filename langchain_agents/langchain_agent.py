@@ -29,6 +29,14 @@ class LangChainAgent(GenerativeAgent):
     has_update_plan: bool = False
     log_file: Any = None
     logger: Optional[logging.RootLogger] = None
+    chatting: bool = False
+
+    def to_dict(self):
+        info = {"id": self.id,
+                "name": self.name,
+                "emoji": self.emoji,
+                "move_path": ""}
+        return info
 
     def chain(self, prompt: PromptTemplate) -> LLMChain:
         return LLMChain(
@@ -360,12 +368,12 @@ class LangChainAgent(GenerativeAgent):
             "The {name}'s action: {action}\n\n"
             "Here is the emoji used to represent {name}'s action:"
         )
-        if task:
-            action = f"{task}:{action}"
-        emoji = self.chain(prompt).run(name=self.name,
-                                     action=action).strip()
-        self.emoji = emoji
-        self.logger.info(f"更新{self.name}的emoji: {self.emoji}")
+        # if task:
+        #     action = f"{task}:{action}"
+        # emoji = self.chain(prompt).run(name=self.name,
+        #                              action=action).strip()
+        # self.emoji = emoji
+        # self.logger.info(f"更新{self.name}的emoji: {self.emoji}")
 
     def get_emoji(self, action):
         prompt = PromptTemplate.from_template(
